@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Claude Code -> Langfuse hook"""
-import json, os, sys, time, hashlib
+import json, os, sys, time, hashlib, subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +30,75 @@ def _log(level, message):
 def debug(m):
     if DEBUG: _log("DEBUG", m)
 def info(m): _log("INFO", m)
+
+# ---- Git context (branch / repo / head_sha) ----
+_GIT_CACHE: Dict[str, Dict[str, Any]] = {}
+_GIT_CACHE_TTL_S = 5.0
+
+def _git(cwd: Optional[str], *args: str) -> Optional[str]:
+    if not cwd: return None
+    try:
+        r = subprocess.run(["git", "-C", cwd, *args],
+                           capture_output=True, text=True, timeout=2.0)
+    except Exception:
+        return None
+    if r.returncode != 0: return None
+    return (r.stdout or "").strip() or None
+
+def get_git_context(cwd: Optional[str], force_refresh: bool = False) -> Dict[str, Optional[str]]:
+    empty = {"branch": None, "repo": None, "repo_root": None, "head_sha": None}
+    if not cwd: return empty
+    now = time.time()
+    if not force_refresh:
+        cached = _GIT_CACHE.get(cwd)
+        if cached and cached["expires_at"] > now:
+            return cached["data"]
+    repo_root = _git(cwd, "rev-parse", "--show-toplevel")
+    if not repo_root:
+        _GIT_CACHE[cwd] = {"data": empty, "expires_at": now + _GIT_CACHE_TTL_S}
+        return empty
+    branch = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD") or "HEAD"
+    head_sha = _git(cwd, "rev-parse", "HEAD")
+    data = {"branch": branch, "repo": Path(repo_root).name,
+            "repo_root": repo_root, "head_sha": head_sha}
+    _GIT_CACHE[cwd] = {"data": data, "expires_at": now + _GIT_CACHE_TTL_S}
+    return data
+
+def git_tags(ctx: Dict[str, Optional[str]]) -> List[str]:
+    out = []
+    b = ctx.get("branch")
+    if b and b != "HEAD": out.append(f"branch:{b}")
+    r = ctx.get("repo")
+    if r: out.append(f"repo:{r}")
+    return out
+
+def write_active_session(repo_root: Optional[str], data: Dict[str, Any]) -> None:
+    """Persist {trace_id, session_id, branch, repo, head_sha} into <repo>/.claude/active-session.json
+    so the commit-msg git hook can read it and inject the link into commit messages."""
+    if not repo_root: return
+    try:
+        d = Path(repo_root) / ".claude"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / "active-session.json"
+        existing = {}
+        if p.exists():
+            try: existing = json.loads(p.read_text(encoding="utf-8"))
+            except Exception: existing = {}
+        existing.update({k: v for k, v in data.items() if v is not None})
+        existing["updated_at"] = datetime.now(timezone.utc).isoformat()
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(existing, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, p)
+    except Exception as e:
+        debug(f"write_active_session failed: {e}")
+
+def get_otel_trace_id_hex(span) -> Optional[str]:
+    try:
+        ctx = span.get_span_context()
+        if ctx and ctx.trace_id:
+            return f"{ctx.trace_id:032x}"
+    except Exception: pass
+    return None
 
 class FileLock:
     def __init__(self, path, timeout_s=2.0):
@@ -148,7 +217,6 @@ def get_message_id(msg):
         if isinstance(mid, str) and mid: return mid
     return None
 
-# ---- 新增：从 transcript 消息中提取时间戳 ----
 def get_timestamp(msg: Dict[str, Any]) -> Optional[datetime]:
     """从 transcript 消息的 timestamp 字段提取真实时间，用于计算正确的 latency。"""
     ts = msg.get("timestamp")
@@ -159,7 +227,6 @@ def get_timestamp(msg: Dict[str, Any]) -> Optional[datetime]:
             pass
     return None
 
-# ---- 新增：从 transcript 消息中提取 token usage ----
 def extract_usage(msg: Dict[str, Any]) -> Dict[str, int]:
     u = (msg.get("message") or {}).get("usage") or {}
     return {
@@ -176,7 +243,6 @@ def aggregate_usage(msgs: List[Dict[str, Any]]) -> Dict[str, int]:
             total[k] += v
     return {k: v for k, v in total.items() if v > 0}
 
-# A4: language detection from file extension
 _EXT_LANG = {
     "py": "python", "ipynb": "python", "js": "javascript", "mjs": "javascript",
     "ts": "typescript", "tsx": "typescript", "jsx": "javascript",
@@ -199,7 +265,6 @@ def _count_lines(s: Any) -> int:
     return len(s.splitlines())
 
 def loc_for_call(tc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """A4: extract (added, removed, language, file_path) for code-edit tool calls."""
     name = tc.get("name")
     inp = tc.get("input") or {}
     if not isinstance(inp, dict): return None
@@ -214,7 +279,7 @@ def loc_for_call(tc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         fp = inp.get("file_path") or ""
     elif name == "Write":
         added = _count_lines(inp.get("content"))
-        removed = 0  # treat Write as net-add (consistent with Claude Code's metric)
+        removed = 0
         fp = inp.get("file_path") or ""
     elif name == "NotebookEdit":
         added = _count_lines(inp.get("new_source"))
@@ -225,14 +290,11 @@ def loc_for_call(tc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return {"added": int(added), "removed": int(removed),
             "language": _lang_from_path(fp), "file_path": fp}
 
-# A5: commit / PR detection from Bash command strings.
-# Match active commands; reject obvious dry-run / help variants.
 import re as _re
 _COMMIT_RE = _re.compile(r"\bgit\s+(?:-[^\s]+\s+)*commit\b")
 _PR_CREATE_RE = _re.compile(r"\bgh\s+(?:-[^\s]+\s+)*pr\s+create\b")
 _DRY_HELP_RE = _re.compile(r"--(?:help|dry-run)\b")
 def commit_pr_counts(tc: Dict[str, Any]) -> Tuple[int, int]:
-    """Return (commits, prs) detected in this Bash call."""
     if tc.get("name") != "Bash": return (0, 0)
     inp = tc.get("input") or {}
     cmd = inp.get("command") if isinstance(inp, dict) else None
@@ -240,8 +302,6 @@ def commit_pr_counts(tc: Dict[str, Any]) -> Tuple[int, int]:
     if _DRY_HELP_RE.search(cmd): return (0, 0)
     return (len(_COMMIT_RE.findall(cmd)), len(_PR_CREATE_RE.findall(cmd)))
 
-# A6: cost computation. Prices in USD per 1M tokens (Anthropic public pricing).
-# Match by prefix; longer prefixes win. Update when new models ship.
 _MODEL_PRICES = [
     ("claude-opus-4",   {"input": 15.0, "output": 75.0, "cache_read_input": 1.50, "cache_creation_input": 18.75}),
     ("claude-sonnet-4", {"input":  3.0, "output": 15.0, "cache_read_input": 0.30, "cache_creation_input":  3.75}),
@@ -263,28 +323,20 @@ def compute_cost(model: str, usage: Dict[str, int]) -> Optional[Dict[str, float]
         if rate is None or not tok: continue
         cd[k] = round(tok * rate / 1_000_000.0, 6)
     if cd:
-        # Langfuse won't auto-sum sub-fields; without an explicit "total" the
-        # observation's totalCost / trace cost dashboard show 0.
         cd["total"] = round(sum(cd.values()), 6)
     return cd or None
 
-# A3: rejection detection. Phrasing observed in transcripts when user denies a tool.
 REJECT_MARKERS = (
     "The user doesn't want to proceed with this tool use",
     "The tool use was rejected",
 )
 def classify_decision(output_text: Any, is_error: bool) -> str:
-    """Return 'reject' if the tool_result is the user-denial sentinel, else 'accept'.
-    Tool errors that aren't rejections still count as 'accept' (the tool was executed)."""
     if is_error and isinstance(output_text, str):
         for marker in REJECT_MARKERS:
             if marker in output_text:
                 return "reject"
     return "accept"
 
-# A8: compaction event detection. Two known shapes:
-#   - top-level {"isCompactSummary": true, ...}
-#   - {"type": "system", "subtype": "compact_boundary"|"compact_summary"|...}
 def is_compact_event(msg: Dict[str, Any]) -> bool:
     if not isinstance(msg, dict): return False
     if msg.get("isCompactSummary") is True: return True
@@ -371,7 +423,6 @@ def build_turns(messages):
     return turns
 
 def extract_events(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """A8: scan raw messages for non-turn events (compaction etc.)."""
     out = []
     for m in messages:
         if is_compact_event(m):
@@ -379,7 +430,6 @@ def extract_events(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 def _tool_calls(ams):
-    """Each tool call carries its source assistant message timestamp as start_ts (A2)."""
     out = []
     for am in ams:
         am_ts = get_timestamp(am)
@@ -390,13 +440,14 @@ def _tool_calls(ams):
                         "input": inp, "start_ts": am_ts})
     return out
 
-def emit_turn(lf, sid, n, turn, tp, user_id=None):
+def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    git_ctx = git_ctx or {}
+    git_meta = git_ctx if git_ctx.get("repo_root") else None
     ut, ut_meta = truncate_text(extract_text(get_content(turn.user_msg)))
     last = turn.assistant_msgs[-1]
     at, at_meta = truncate_text(extract_text(get_content(last)))
     model = get_model(turn.assistant_msgs[0])
     tcs = _tool_calls(turn.assistant_msgs)
-    # A7: query_source — main conversation vs Task-spawned subagent
     is_sidechain = bool(turn.user_msg.get("isSidechain"))
     query_source = "subagent" if is_sidechain else "main"
 
@@ -410,21 +461,18 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None):
             c["output_meta"] = m
             c["is_error"] = entry.is_error
             c["end_ts"] = entry.timestamp
-            c["decision"] = classify_decision(t, entry.is_error)  # A3
+            c["decision"] = classify_decision(t, entry.is_error)
         else:
-            # Tool call without a paired result (cancelled mid-flight or pending)
             c["output"] = None
             c["is_error"] = False
             c["end_ts"] = None
             c["decision"] = "pending"
 
-    # A3: per-turn decision aggregates
     decision_counts = {"accept": 0, "reject": 0, "pending": 0}
     for c in tcs:
         decision_counts[c.get("decision", "accept")] = decision_counts.get(c.get("decision", "accept"), 0) + 1
     tool_error_count = sum(1 for c in tcs if c.get("is_error"))
 
-    # A4: lines_of_code aggregation. Only count lines for tools that were actually accepted.
     loc_added = loc_removed = 0
     loc_by_language: Dict[str, Dict[str, int]] = {}
     loc_files: List[str] = []
@@ -437,23 +485,17 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None):
         bucket = loc_by_language.setdefault(lang, {"added": 0, "removed": 0})
         bucket["added"] += info_["added"]; bucket["removed"] += info_["removed"]
         if info_["file_path"]: loc_files.append(info_["file_path"])
-        c["loc"] = info_  # propagate onto tool span metadata below
+        c["loc"] = info_
 
-    # A5: commit / PR counts from accepted Bash calls
     commit_count = pr_count = 0
     for c in tcs:
         if c.get("decision") != "accept": continue
         ci, pi = commit_pr_counts(c)
         commit_count += ci; pr_count += pi
 
-    # A6: cost from token usage × model price
     usage_total = aggregate_usage(turn.assistant_msgs) or {}
     cost_details = compute_cost(model, usage_total)
 
-    # 从 transcript 提取真实时间戳，修正 latency 为 0 的问题。
-    # langfuse v4 SDK 的 start_as_current_observation 不接受 start_time，
-    # 必须落到底层 OTel tracer：lf._otel_tracer.start_span(start_time=ns)，
-    # 再用 lf._create_observation_from_otel_span 包成 langfuse 观察对象。
     now = datetime.now(timezone.utc)
     turn_start = get_timestamp(turn.user_msg) or now
     turn_end   = get_timestamp(last) or now
@@ -468,10 +510,13 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None):
 
     tracer = lf._otel_tracer
     pa_kwargs = {"session_id": sid, "trace_name": f"Claude Code - Turn {n}",
-                 "tags": ["claude-code", query_source]}  # A7
+                 "tags": ["claude-code", query_source] + git_tags(git_ctx)}
     if user_id: pa_kwargs["user_id"] = user_id
+
+    trace_id_hex: Optional[str] = None
     with propagate_attributes(**pa_kwargs):
         turn_span = tracer.start_span(name=f"Claude Code - Turn {n}", start_time=turn_start_ns)
+        trace_id_hex = get_otel_trace_id_hex(turn_span)
         try:
             with _otel_use_span(turn_span, end_on_exit=False):
                 lf._create_observation_from_otel_span(
@@ -489,7 +534,8 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None):
                                                  "files": loc_files} if (loc_added or loc_removed) else None,
                               "commit_count": commit_count,
                               "pr_count": pr_count,
-                              "cost_usd": sum(cost_details.values()) if cost_details else None})
+                              "cost_usd": sum(cost_details.values()) if cost_details else None,
+                              "git": git_meta})
 
                 gen_span = tracer.start_span(name="Claude Response", start_time=gen_start_ns)
                 try:
@@ -509,9 +555,9 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None):
                             output=gen_output,
                             usage_details=usage_total or None,
                             metadata={"assistant_text": at_meta, "tool_count": len(tcs),
-                                      "query_source": query_source},
+                                      "query_source": query_source, "git": git_meta},
                         )
-                        if cost_details:  # A6
+                        if cost_details:
                             gen_kwargs["cost_details"] = cost_details
                         lf._create_observation_from_otel_span(**gen_kwargs)
                 finally:
@@ -520,7 +566,6 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None):
                 for tc in tcs:
                     io = tc["input"]; im = None
                     if isinstance(io, str): io, im = truncate_text(io)
-                    # A2: real per-tool latency from transcript timestamps
                     tool_start = tc.get("start_ts") or gen_end
                     tool_end   = tc.get("end_ts")   or turn_end
                     tool_start_ns = _ns(tool_start)
@@ -528,10 +573,11 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None):
                     tool_meta = {
                         "tool_name": tc["name"], "tool_id": tc["id"],
                         "input_meta": im, "output_meta": tc.get("output_meta"),
-                        "is_error": tc.get("is_error", False),       # A1
-                        "decision": tc.get("decision", "accept"),     # A3
-                        "loc": tc.get("loc"),                         # A4
-                        "query_source": query_source,                 # A7
+                        "is_error": tc.get("is_error", False),
+                        "decision": tc.get("decision", "accept"),
+                        "loc": tc.get("loc"),
+                        "query_source": query_source,
+                        "git": git_meta,
                     }
                     tool_span = tracer.start_span(name=f"Tool: {tc['name']}", start_time=tool_start_ns)
                     try:
@@ -544,20 +590,25 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None):
                         tool_span.end(end_time=tool_end_ns)
         finally:
             turn_span.end(end_time=turn_end_ns)
+    return trace_id_hex
 
 def emit_session_marker(lf, sid: str, event_name: str, payload: Dict[str, Any],
-                         user_id: Optional[str] = None):
-    """B2: emit SessionStart / SessionEnd as a span. Lets us count sessions and measure span duration."""
+                         user_id: Optional[str] = None,
+                         git_ctx: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    git_ctx = git_ctx or {}
+    git_meta = git_ctx if git_ctx.get("repo_root") else None
     now = datetime.now(timezone.utc)
     start_ns = int(now.timestamp() * 1_000_000_000)
     end_ns = start_ns + 1_000_000
     tag = "session-start" if event_name == "SessionStart" else "session-end"
     pa = {"session_id": sid, "trace_name": f"Claude Code - {event_name}",
-          "tags": ["claude-code", tag]}
+          "tags": ["claude-code", tag] + git_tags(git_ctx)}
     if user_id: pa["user_id"] = user_id
     tracer = lf._otel_tracer
+    trace_id_hex = None
     with propagate_attributes(**pa):
         sp = tracer.start_span(name=event_name, start_time=start_ns)
+        trace_id_hex = get_otel_trace_id_hex(sp)
         try:
             with _otel_use_span(sp, end_on_exit=False):
                 lf._create_observation_from_otel_span(
@@ -566,24 +617,30 @@ def emit_session_marker(lf, sid: str, event_name: str, payload: Dict[str, Any],
                     metadata={"event": event_name, "session_id": sid,
                               "source": payload.get("source"),
                               "reason": payload.get("reason"),
-                              "cwd": payload.get("cwd")})
+                              "cwd": payload.get("cwd"),
+                              "git": git_meta})
         finally:
             sp.end(end_time=end_ns)
+    return trace_id_hex
 
 def emit_user_prompt_marker(lf, sid: str, payload: Dict[str, Any],
-                             user_id: Optional[str] = None):
-    """B3: emit UserPromptSubmit. Captures prompt before LLM responds — useful for early visibility."""
+                             user_id: Optional[str] = None,
+                             git_ctx: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    git_ctx = git_ctx or {}
+    git_meta = git_ctx if git_ctx.get("repo_root") else None
     prompt = payload.get("prompt") or payload.get("user_prompt") or ""
     pt, pmeta = truncate_text(prompt if isinstance(prompt, str) else json.dumps(prompt, ensure_ascii=False))
     now = datetime.now(timezone.utc)
     start_ns = int(now.timestamp() * 1_000_000_000)
     end_ns = start_ns + 1_000_000
     pa = {"session_id": sid, "trace_name": "Claude Code - User Prompt",
-          "tags": ["claude-code", "user-prompt"]}
+          "tags": ["claude-code", "user-prompt"] + git_tags(git_ctx)}
     if user_id: pa["user_id"] = user_id
     tracer = lf._otel_tracer
+    trace_id_hex = None
     with propagate_attributes(**pa):
         sp = tracer.start_span(name="UserPromptSubmit", start_time=start_ns)
+        trace_id_hex = get_otel_trace_id_hex(sp)
         try:
             with _otel_use_span(sp, end_on_exit=False):
                 lf._create_observation_from_otel_span(
@@ -591,12 +648,16 @@ def emit_user_prompt_marker(lf, sid: str, payload: Dict[str, Any],
                     input={"role": "user", "content": pt},
                     output=None,
                     metadata={"event": "UserPromptSubmit", "session_id": sid,
-                              "prompt_meta": pmeta, "cwd": payload.get("cwd")})
+                              "prompt_meta": pmeta, "cwd": payload.get("cwd"),
+                              "git": git_meta})
         finally:
             sp.end(end_time=end_ns)
+    return trace_id_hex
 
-def emit_event(lf, sid, ev: Dict[str, Any], user_id: Optional[str] = None):
-    """A8: emit a non-turn event (e.g., compaction) as a standalone span."""
+def emit_event(lf, sid, ev: Dict[str, Any], user_id: Optional[str] = None,
+                git_ctx: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    git_ctx = git_ctx or {}
+    git_meta = git_ctx if git_ctx.get("repo_root") else None
     ts = ev.get("timestamp") or datetime.now(timezone.utc)
     start_ns = int(ts.timestamp() * 1_000_000_000)
     end_ns = start_ns + 1_000_000
@@ -604,10 +665,12 @@ def emit_event(lf, sid, ev: Dict[str, Any], user_id: Optional[str] = None):
     tracer = lf._otel_tracer
     pa = {"session_id": sid,
           "trace_name": f"Claude Code - {kind.capitalize()}",
-          "tags": ["claude-code", kind]}
+          "tags": ["claude-code", kind] + git_tags(git_ctx)}
     if user_id: pa["user_id"] = user_id
+    trace_id_hex = None
     with propagate_attributes(**pa):
         sp = tracer.start_span(name=kind.capitalize(), start_time=start_ns)
+        trace_id_hex = get_otel_trace_id_hex(sp)
         try:
             with _otel_use_span(sp, end_on_exit=False):
                 raw = ev.get("raw") or {}
@@ -616,9 +679,49 @@ def emit_event(lf, sid, ev: Dict[str, Any], user_id: Optional[str] = None):
                     input=None, output=None,
                     metadata={"kind": kind, "session_id": sid,
                               "subtype": raw.get("subtype"),
-                              "uuid": raw.get("uuid")})
+                              "uuid": raw.get("uuid"),
+                              "git": git_meta})
         finally:
             sp.end(end_time=end_ns)
+    return trace_id_hex
+
+def emit_commit_event(lf, sid: str, payload: Dict[str, Any], git_ctx: Dict[str, Any],
+                      user_id: Optional[str] = None) -> Optional[str]:
+    """PostToolUse(Bash, git commit) → emit a Commit observation in Langfuse."""
+    cwd = payload.get("cwd") or git_ctx.get("repo_root")
+    head_sha = git_ctx.get("head_sha")
+    if not head_sha:
+        return None
+    msg = _git(cwd, "log", "-1", "--pretty=%B", head_sha) or ""
+    files_str = _git(cwd, "show", "--name-only", "--pretty=", head_sha) or ""
+    files = [f for f in files_str.split("\n") if f.strip()]
+    short_stat = _git(cwd, "show", "--shortstat", "--pretty=", head_sha) or ""
+
+    now = datetime.now(timezone.utc)
+    start_ns = int(now.timestamp() * 1_000_000_000)
+    end_ns = start_ns + 1_000_000
+
+    pa = {"session_id": sid, "trace_name": "Claude Code - Commit",
+          "tags": ["claude-code", "commit"] + git_tags(git_ctx)}
+    if user_id: pa["user_id"] = user_id
+    tracer = lf._otel_tracer
+    trace_id_hex = None
+    with propagate_attributes(**pa):
+        sp = tracer.start_span(name="GitCommit", start_time=start_ns)
+        trace_id_hex = get_otel_trace_id_hex(sp)
+        try:
+            with _otel_use_span(sp, end_on_exit=False):
+                lf._create_observation_from_otel_span(
+                    otel_span=sp, as_type="event",
+                    input=None,
+                    output={"sha": head_sha, "branch": git_ctx.get("branch"),
+                            "message": msg, "files": files,
+                            "shortstat": short_stat.strip()},
+                    metadata={"event": "GitCommit", "session_id": sid,
+                              "git": git_ctx, "files_changed": len(files)})
+        finally:
+            sp.end(end_time=end_ns)
+    return trace_id_hex
 
 def resolve_user_id():
     uid = os.environ.get("CC_LANGFUSE_USER_ID")
@@ -630,6 +733,21 @@ def resolve_user_id():
         import getpass; return getpass.getuser()
     except Exception:
         return None
+
+def _is_git_commit_command(cmd: Any) -> bool:
+    if not isinstance(cmd, str): return False
+    if _DRY_HELP_RE.search(cmd): return False
+    return bool(_COMMIT_RE.search(cmd))
+
+def _post_tool_succeeded(payload: Dict[str, Any]) -> bool:
+    """PostToolUse payloads: tool_response can be dict or str. Treat missing fields as success."""
+    resp = payload.get("tool_response") or payload.get("toolResponse")
+    if isinstance(resp, dict):
+        if resp.get("isError") or resp.get("is_error"):
+            return False
+        if resp.get("interrupted"):
+            return False
+    return True
 
 def main():
     start = time.time()
@@ -644,26 +762,79 @@ def main():
     sid, tp = extract_session_and_transcript(payload)
     if not sid: return 0
     event_name = (payload.get("hook_event_name") or payload.get("hookEventName") or "Stop")
+
+    cwd = payload.get("cwd") or os.getcwd()
+    git_ctx = get_git_context(cwd)
+
     try: lf = Langfuse(public_key=pk, secret_key=sk, host=host)
     except Exception: return 0
     try:
-        # B2: SessionStart / SessionEnd — emit a marker, no transcript tail
+        # SessionStart / SessionEnd — emit a marker, no transcript tail
         if event_name in ("SessionStart", "SessionEnd"):
-            try: emit_session_marker(lf, sid, event_name, payload, user_id=user_id)
-            except Exception as e: debug(f"emit_session_marker failed: {e}")
+            try:
+                tid = emit_session_marker(lf, sid, event_name, payload,
+                                           user_id=user_id, git_ctx=git_ctx)
+            except Exception as e:
+                tid = None; debug(f"emit_session_marker failed: {e}")
             try: lf.flush()
             except Exception: pass
-            info(f"Emitted {event_name} marker (session={sid})")
+            write_active_session(git_ctx.get("repo_root"), {
+                "session_id": sid, "trace_id": tid,
+                "branch": git_ctx.get("branch"), "repo": git_ctx.get("repo"),
+                "head_sha": git_ctx.get("head_sha"),
+                "last_event": event_name,
+            })
+            info(f"Emitted {event_name} marker (session={sid}, branch={git_ctx.get('branch')})")
             return 0
-        # B3: UserPromptSubmit — emit a prompt marker, no transcript tail
+
+        # UserPromptSubmit
         if event_name == "UserPromptSubmit":
-            try: emit_user_prompt_marker(lf, sid, payload, user_id=user_id)
-            except Exception as e: debug(f"emit_user_prompt_marker failed: {e}")
+            try:
+                tid = emit_user_prompt_marker(lf, sid, payload,
+                                               user_id=user_id, git_ctx=git_ctx)
+            except Exception as e:
+                tid = None; debug(f"emit_user_prompt_marker failed: {e}")
             try: lf.flush()
             except Exception: pass
+            write_active_session(git_ctx.get("repo_root"), {
+                "session_id": sid, "trace_id": tid,
+                "branch": git_ctx.get("branch"), "repo": git_ctx.get("repo"),
+                "head_sha": git_ctx.get("head_sha"),
+                "last_event": "UserPromptSubmit",
+            })
             info(f"Emitted UserPromptSubmit marker (session={sid})")
             return 0
-        # Default (Stop / PostToolUse / etc): tail the transcript
+
+        # PostToolUse — only act on git commit Bash calls
+        if event_name == "PostToolUse":
+            tool_name = payload.get("tool_name") or payload.get("toolName")
+            if tool_name != "Bash":
+                return 0
+            tool_input = payload.get("tool_input") or payload.get("toolInput") or {}
+            cmd = tool_input.get("command") if isinstance(tool_input, dict) else None
+            if not _is_git_commit_command(cmd):
+                return 0
+            if not _post_tool_succeeded(payload):
+                debug("PostToolUse git commit reported error/interrupt — skipping emit")
+                return 0
+            # HEAD has just moved — bust the cache
+            git_ctx = get_git_context(cwd, force_refresh=True)
+            try:
+                tid = emit_commit_event(lf, sid, payload, git_ctx, user_id=user_id)
+            except Exception as e:
+                tid = None; debug(f"emit_commit_event failed: {e}")
+            try: lf.flush()
+            except Exception: pass
+            write_active_session(git_ctx.get("repo_root"), {
+                "session_id": sid, "trace_id": tid,
+                "branch": git_ctx.get("branch"), "repo": git_ctx.get("repo"),
+                "head_sha": git_ctx.get("head_sha"),
+                "last_event": "Commit",
+            })
+            info(f"Emitted Commit event (sha={git_ctx.get('head_sha')}, branch={git_ctx.get('branch')})")
+            return 0
+
+        # Default (Stop / etc): tail the transcript
         if not tp or not tp.exists(): return 0
         with FileLock(LOCK_FILE):
             state = load_state()
@@ -673,22 +844,35 @@ def main():
             if not msgs:
                 write_session_state(state, key, ss); save_state(state); return 0
             turns = build_turns(msgs)
-            events = extract_events(msgs)  # A8
+            events = extract_events(msgs)
             if not turns and not events:
                 write_session_state(state, key, ss); save_state(state); return 0
             emitted = 0
+            last_trace_id = None
             for t in turns:
                 emitted += 1
-                try: emit_turn(lf, sid, ss.turn_count + emitted, t, tp, user_id=user_id)
+                try:
+                    tid = emit_turn(lf, sid, ss.turn_count + emitted, t, tp,
+                                    user_id=user_id, git_ctx=git_ctx)
+                    if tid: last_trace_id = tid
                 except Exception as e: debug(f"emit turn failed: {e}")
             for ev in events:
-                try: emit_event(lf, sid, ev, user_id=user_id)
+                try:
+                    tid = emit_event(lf, sid, ev, user_id=user_id, git_ctx=git_ctx)
+                    if tid: last_trace_id = tid
                 except Exception as e: debug(f"emit event failed: {e}")
             ss.turn_count += emitted
             write_session_state(state, key, ss); save_state(state)
         try: lf.flush()
         except Exception: pass
-        info(f"Processed {emitted} turns + {len(events)} events in {time.time()-start:.2f}s (session={sid})")
+        write_active_session(git_ctx.get("repo_root"), {
+            "session_id": sid, "trace_id": last_trace_id,
+            "branch": git_ctx.get("branch"), "repo": git_ctx.get("repo"),
+            "head_sha": git_ctx.get("head_sha"),
+            "last_event": event_name,
+        })
+        info(f"Processed {emitted} turns + {len(events)} events in {time.time()-start:.2f}s "
+             f"(session={sid}, branch={git_ctx.get('branch')})")
         return 0
     except Exception as e:
         debug(f"failure: {e}"); return 0
@@ -698,5 +882,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
