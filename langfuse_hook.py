@@ -391,6 +391,19 @@ class Turn:
     assistant_msgs: List[Dict[str, Any]]
     tool_results_by_id: Dict[str, ToolResultEntry]
 
+def _merge_assistant_content(existing: Dict[str, Any], new: Dict[str, Any]) -> None:
+    # Streamed assistant messages share a message id but each JSONL record carries
+    # only one or two content blocks. Concatenate so parallel tool_use blocks and
+    # interleaved text fragments aren't lost.
+    if isinstance(existing.get("message"), dict):
+        cur = list(existing["message"].get("content") or [])
+        add = list((new.get("message") or {}).get("content") or [])
+        existing["message"]["content"] = cur + add
+    else:
+        existing["content"] = list(existing.get("content") or []) + list(new.get("content") or [])
+    if new.get("timestamp"):
+        existing["timestamp"] = new["timestamp"]
+
 def build_turns(messages):
     turns = []
     cu = None; ao = []; al = {}; tr = {}
@@ -417,8 +430,11 @@ def build_turns(messages):
         if role == "assistant":
             if cu is None: continue
             mid = get_message_id(msg) or f"noid:{len(ao)}"
-            if mid not in al: ao.append(mid)
-            al[mid] = msg
+            if mid in al:
+                _merge_assistant_content(al[mid], msg)
+            else:
+                ao.append(mid)
+                al[mid] = msg
     flush()
     return turns
 
