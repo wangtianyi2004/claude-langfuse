@@ -45,6 +45,16 @@ def _git(cwd: Optional[str], *args: str) -> Optional[str]:
     if r.returncode != 0: return None
     return (r.stdout or "").strip() or None
 
+_HOOK_DIR = os.path.dirname(os.path.realpath(__file__))
+def _compute_hook_version() -> str:
+    sha = _git(_HOOK_DIR, "rev-parse", "--short", "HEAD")
+    if not sha: return "unknown"
+    if _git(_HOOK_DIR, "status", "--porcelain"):
+        sha += "+dirty"
+    return sha
+
+HOOK_VERSION = _compute_hook_version()
+
 def get_git_context(cwd: Optional[str], force_refresh: bool = False) -> Dict[str, Optional[str]]:
     empty = {"branch": None, "repo": None, "repo_root": None, "head_sha": None}
     if not cwd: return empty
@@ -561,6 +571,7 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
                     output={"role": "assistant", "content": at},
                     level=turn_level,
                     status_message=turn_status_message,
+                    version=HOOK_VERSION,
                     metadata={"source": "claude-code", "session_id": sid, "turn_number": n,
                               "transcript_path": str(tp), "user_text": ut_meta,
                               "query_source": query_source,
@@ -592,6 +603,7 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
                             input={"role": "user", "content": ut},
                             output=gen_output,
                             usage_details=usage_total or None,
+                            version=HOOK_VERSION,
                             metadata={"assistant_text": at_meta, "tool_count": len(tcs),
                                       "query_source": query_source, "git": git_meta},
                         )
@@ -639,6 +651,7 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
                                 input=io, output=tc.get("output"),
                                 level=tool_level,
                                 status_message=tool_status_message,
+                                version=HOOK_VERSION,
                                 metadata=tool_meta)
                     finally:
                         tool_span.end(end_time=tool_end_ns)
@@ -668,6 +681,7 @@ def emit_session_marker(lf, sid: str, event_name: str, payload: Dict[str, Any],
                 lf._create_observation_from_otel_span(
                     otel_span=sp, as_type="event",
                     input=None, output=None,
+                    version=HOOK_VERSION,
                     metadata={"event": event_name, "session_id": sid,
                               "source": payload.get("source"),
                               "reason": payload.get("reason"),
@@ -701,6 +715,7 @@ def emit_user_prompt_marker(lf, sid: str, payload: Dict[str, Any],
                     otel_span=sp, as_type="event",
                     input={"role": "user", "content": pt},
                     output=None,
+                    version=HOOK_VERSION,
                     metadata={"event": "UserPromptSubmit", "session_id": sid,
                               "prompt_meta": pmeta, "cwd": payload.get("cwd"),
                               "git": git_meta})
@@ -731,6 +746,7 @@ def emit_event(lf, sid, ev: Dict[str, Any], user_id: Optional[str] = None,
                 lf._create_observation_from_otel_span(
                     otel_span=sp, as_type="event",
                     input=None, output=None,
+                    version=HOOK_VERSION,
                     metadata={"kind": kind, "session_id": sid,
                               "subtype": raw.get("subtype"),
                               "uuid": raw.get("uuid"),
@@ -771,6 +787,7 @@ def emit_commit_event(lf, sid: str, payload: Dict[str, Any], git_ctx: Dict[str, 
                     output={"sha": head_sha, "branch": git_ctx.get("branch"),
                             "message": msg, "files": files,
                             "shortstat": short_stat.strip()},
+                    version=HOOK_VERSION,
                     metadata={"event": "GitCommit", "session_id": sid,
                               "git": git_ctx, "files_changed": len(files)})
         finally:
