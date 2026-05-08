@@ -473,6 +473,13 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
         decision_counts[c.get("decision", "accept")] = decision_counts.get(c.get("decision", "accept"), 0) + 1
     tool_error_count = sum(1 for c in tcs if c.get("is_error"))
 
+    if tool_error_count > 0:
+        turn_level = "ERROR"
+    elif decision_counts.get("reject", 0) > 0:
+        turn_level = "WARNING"
+    else:
+        turn_level = None
+
     loc_added = loc_removed = 0
     loc_by_language: Dict[str, Dict[str, int]] = {}
     loc_files: List[str] = []
@@ -523,6 +530,7 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
                     otel_span=turn_span, as_type="span",
                     input={"role": "user", "content": ut},
                     output={"role": "assistant", "content": at},
+                    level=turn_level,
                     metadata={"source": "claude-code", "session_id": sid, "turn_number": n,
                               "transcript_path": str(tp), "user_text": ut_meta,
                               "query_source": query_source,
@@ -579,12 +587,19 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
                         "query_source": query_source,
                         "git": git_meta,
                     }
+                    if tc.get("is_error"):
+                        tool_level = "ERROR"
+                    elif tc.get("decision") == "reject":
+                        tool_level = "WARNING"
+                    else:
+                        tool_level = None
                     tool_span = tracer.start_span(name=f"Tool: {tc['name']}", start_time=tool_start_ns)
                     try:
                         with _otel_use_span(tool_span, end_on_exit=False):
                             lf._create_observation_from_otel_span(
                                 otel_span=tool_span, as_type="tool",
                                 input=io, output=tc.get("output"),
+                                level=tool_level,
                                 metadata=tool_meta)
                     finally:
                         tool_span.end(end_time=tool_end_ns)
