@@ -496,6 +496,19 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
     else:
         turn_level = None
 
+    def _name_summary(picked):
+        from collections import Counter
+        cnt = Counter(c["name"] for c in picked)
+        return ", ".join(f"{n}×{k}" if k > 1 else n for n, k in cnt.items())
+
+    if turn_level == "ERROR":
+        turn_status_message = f"{tool_error_count} tool error(s): {_name_summary([c for c in tcs if c.get('is_error')])}"
+    elif turn_level == "WARNING":
+        rej = [c for c in tcs if c.get("decision") == "reject"]
+        turn_status_message = f"{len(rej)} rejected: {_name_summary(rej)}"
+    else:
+        turn_status_message = None
+
     loc_added = loc_removed = 0
     loc_by_language: Dict[str, Dict[str, int]] = {}
     loc_files: List[str] = []
@@ -547,6 +560,7 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
                     input={"role": "user", "content": ut},
                     output={"role": "assistant", "content": at},
                     level=turn_level,
+                    status_message=turn_status_message,
                     metadata={"source": "claude-code", "session_id": sid, "turn_number": n,
                               "transcript_path": str(tp), "user_text": ut_meta,
                               "query_source": query_source,
@@ -609,6 +623,14 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
                         tool_level = "WARNING"
                     else:
                         tool_level = None
+                    if tc.get("decision") == "reject":
+                        tool_status_message = "User rejected tool use"
+                    elif tc.get("is_error"):
+                        out = tc.get("output")
+                        s = out if isinstance(out, str) else (json.dumps(out, ensure_ascii=False) if out else "")
+                        tool_status_message = s.strip()[:200] or "Tool error"
+                    else:
+                        tool_status_message = None
                     tool_span = tracer.start_span(name=f"Tool: {tc['name']}", start_time=tool_start_ns)
                     try:
                         with _otel_use_span(tool_span, end_on_exit=False):
@@ -616,6 +638,7 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
                                 otel_span=tool_span, as_type="tool",
                                 input=io, output=tc.get("output"),
                                 level=tool_level,
+                                status_message=tool_status_message,
                                 metadata=tool_meta)
                     finally:
                         tool_span.end(end_time=tool_end_ns)
