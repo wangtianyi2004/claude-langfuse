@@ -601,6 +601,20 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
                               "cost_usd": sum(cost_details.values()) if cost_details else None,
                               "git": git_meta})
 
+                # Pull response-side metadata that approximates "how this generation
+                # behaved" — Anthropic doesn't echo the actual request parameters
+                # (temperature/max_tokens/etc.), but stop_reason and the usage
+                # service_tier/speed are useful for filtering generations later.
+                model_parameters: Dict[str, Any] = {}
+                last_msg_obj = (turn.assistant_msgs[-1].get("message") or {})
+                if last_msg_obj.get("stop_reason"):
+                    model_parameters["stop_reason"] = last_msg_obj["stop_reason"]
+                last_usage = last_msg_obj.get("usage") or {}
+                if last_usage.get("service_tier"):
+                    model_parameters["service_tier"] = last_usage["service_tier"]
+                if last_usage.get("speed"):
+                    model_parameters["speed"] = last_usage["speed"]
+
                 gen_span = tracer.start_span(name="Claude Response", start_time=gen_start_ns)
                 try:
                     with _otel_use_span(gen_span, end_on_exit=False):
@@ -620,6 +634,7 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
                             usage_details=usage_total or None,
                             version=HOOK_VERSION,
                             completion_start_time=gen_completion_start,
+                            model_parameters=model_parameters or None,
                             metadata={"assistant_text": at_meta, "tool_count": len(tcs),
                                       "query_source": query_source, "git": git_meta},
                         )
