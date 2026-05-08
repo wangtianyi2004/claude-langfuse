@@ -411,6 +411,9 @@ def _merge_assistant_content(existing: Dict[str, Any], new: Dict[str, Any]) -> N
         existing["message"]["content"] = cur + add
     else:
         existing["content"] = list(existing.get("content") or []) + list(new.get("content") or [])
+    # Snapshot first-chunk timestamp before overwriting with last-chunk's, so callers
+    # can recover when streaming started (used for generation completion_start_time / TTFT).
+    existing.setdefault("_first_timestamp", existing.get("timestamp"))
     if new.get("timestamp"):
         existing["timestamp"] = new["timestamp"]
 
@@ -545,8 +548,20 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
     now = datetime.now(timezone.utc)
     turn_start = get_timestamp(turn.user_msg) or now
     turn_end   = get_timestamp(last) or now
-    gen_start  = get_timestamp(turn.assistant_msgs[0]) or turn_start
-    gen_end    = turn_end
+    # Generation observation spans the whole turn (request -> last assistant chunk).
+    # gen_start aligns with turn_start (≈ user prompt = request start); the first
+    # streamed assistant chunk's timestamp becomes completion_start_time so Langfuse
+    # can compute TTFT.
+    first_am = turn.assistant_msgs[0]
+    first_am_ts_str = first_am.get("_first_timestamp") or first_am.get("timestamp")
+    gen_completion_start = None
+    if first_am_ts_str:
+        try:
+            gen_completion_start = datetime.fromisoformat(first_am_ts_str.replace("Z", "+00:00"))
+        except Exception:
+            pass
+    gen_start = turn_start
+    gen_end   = turn_end
 
     def _ns(dt): return int(dt.timestamp() * 1_000_000_000)
     turn_start_ns = _ns(turn_start)
@@ -604,6 +619,7 @@ def emit_turn(lf, sid, n, turn, tp, user_id=None, git_ctx: Optional[Dict[str, An
                             output=gen_output,
                             usage_details=usage_total or None,
                             version=HOOK_VERSION,
+                            completion_start_time=gen_completion_start,
                             metadata={"assistant_text": at_meta, "tool_count": len(tcs),
                                       "query_source": query_source, "git": git_meta},
                         )
