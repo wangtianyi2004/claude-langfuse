@@ -1,0 +1,1585 @@
+{
+  "uid": "claude-my-usage",
+  "title": "Claude Code \u2014 My Usage",
+  "description": "Personal view: business value, cost, activity patterns, and team context",
+  "tags": [
+    "claude-code",
+    "personal"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "My Overview",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total Cost",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 200
+              }
+            ]
+          },
+          "noValue": "-"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT toFloat64(sum(o.effective_cost)) AS cost FROM default.observations_eff o JOIN default.traces t ON o.trace_id = t.id WHERE $__timeFilter(o.start_time) AND o.type='GENERATION' AND t.name NOT LIKE 'Execute evaluator%' AND t.user_id = '${user}'"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Sessions",
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT toFloat64(count(DISTINCT session_id)) AS sessions FROM default.traces WHERE $__timeFilter(timestamp) AND user_id = '${user}' AND is_deleted = 0"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Turns",
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT toFloat64(count()) AS turns FROM default.traces WHERE $__timeFilter(timestamp) AND user_id = '${user}' AND is_deleted = 0"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Active Days",
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT toFloat64(count(DISTINCT toDate(timestamp))) AS active_days FROM default.traces WHERE $__timeFilter(timestamp) AND user_id = '${user}' AND is_deleted = 0"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Commits",
+      "description": "Git commits made via Claude Code sessions",
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "semi-dark-green",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 5
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT toFloat64(sum(toInt64OrZero(metadata['commit_count']))) AS commits FROM default.traces WHERE $__timeFilter(timestamp) AND user_id = '${user}' AND is_deleted = 0"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Tool Accept Rate",
+      "description": "% of tool calls you approved vs rejected",
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "green",
+                "value": 90
+              }
+            ]
+          },
+          "noValue": "N/A"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT round(sum(toInt64OrZero(JSONExtractString(metadata['tool_decisions'],'accept'))) * 100.0 / greatest(sum(toInt64OrZero(JSONExtractString(metadata['tool_decisions'],'accept'))) + sum(toInt64OrZero(JSONExtractString(metadata['tool_decisions'],'reject'))), 1), 1) AS accept_rate FROM default.traces WHERE $__timeFilter(timestamp) AND user_id = '${user}' AND is_deleted = 0 AND metadata['tool_decisions'] != ''"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Spending Intelligence",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Daily Cost",
+      "description": "My daily spend over time",
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "semi-dark-blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "hidden"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(o.start_time) AS time, toFloat64(sum(o.effective_cost)) AS cost FROM default.observations_eff o JOIN default.traces t ON o.trace_id = t.id WHERE $__timeFilter(o.start_time) AND o.type='GENERATION' AND t.name NOT LIKE 'Execute evaluator%' AND t.user_id = '${user}' GROUP BY time ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "piechart",
+      "title": "Cost by Model",
+      "description": "Proportion of spend per model",
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ]
+        },
+        "pieType": "donut",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT o.provided_model_name AS model, toFloat64(sum(o.effective_cost)) AS cost FROM default.observations_eff o JOIN default.traces t ON o.trace_id = t.id WHERE $__timeFilter(o.start_time) AND o.type='GENERATION' AND t.name NOT LIKE 'Execute evaluator%' AND t.user_id = '${user}' AND o.provided_model_name IS NOT NULL GROUP BY model ORDER BY cost DESC"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Cache Hit Rate",
+      "description": "% of input tokens served from prompt cache",
+      "gridPos": {
+        "x": 18,
+        "y": 6,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 80
+              }
+            ]
+          },
+          "noValue": "N/A"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT round(sum(o.eff_cache_read) * 100.0 / greatest(sum(o.eff_input) + sum(o.eff_cache_read), 1), 1) AS cache_hit_pct FROM default.observations_eff o JOIN default.traces t ON o.trace_id = t.id WHERE $__timeFilter(o.start_time) AND o.type='GENERATION' AND t.name NOT LIKE 'Execute evaluator%' AND t.user_id = '${user}'"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Cache Read Tokens",
+      "description": "Tokens served from cache (cheaper than fresh input)",
+      "gridPos": {
+        "x": 18,
+        "y": 10,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT toFloat64(sum(o.eff_cache_read)) AS cache_read_tokens FROM default.observations_eff o JOIN default.traces t ON o.trace_id = t.id WHERE $__timeFilter(o.start_time) AND o.type='GENERATION' AND t.name NOT LIKE 'Execute evaluator%' AND t.user_id = '${user}'"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Token & Cache",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Daily Token Usage",
+      "description": "Input vs output tokens per day",
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "input_tokens"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Input"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "output_tokens"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Output"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(o.start_time) AS time, toFloat64(sum(o.eff_input)) AS input_tokens, toFloat64(sum(o.eff_output)) AS output_tokens FROM default.observations_eff o JOIN default.traces t ON o.trace_id = t.id WHERE $__timeFilter(o.start_time) AND o.type='GENERATION' AND t.name NOT LIKE 'Execute evaluator%' AND t.user_id = '${user}' GROUP BY time ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Cache Read vs Creation",
+      "description": "Cache read = tokens retrieved from cache (cheap). Cache creation = tokens written to cache.",
+      "gridPos": {
+        "x": 12,
+        "y": 15,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cache_read"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cache Read"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cache_creation"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cache Creation"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(o.start_time) AS time, toFloat64(sum(o.eff_cache_read)) AS cache_read, toFloat64(sum(o.eff_cache_creation)) AS cache_creation FROM default.observations_eff o JOIN default.traces t ON o.trace_id = t.id WHERE $__timeFilter(o.start_time) AND o.type='GENERATION' AND t.name NOT LIKE 'Execute evaluator%' AND t.user_id = '${user}' GROUP BY time ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Activity Patterns",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 31,
+      "type": "barchart",
+      "title": "Activity by Hour of Day",
+      "description": "When do you use Claude Code? (UTC)",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "semi-dark-blue"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "hour_of_day",
+        "barWidth": 0.9,
+        "groupWidth": 0.7,
+        "orientation": "auto",
+        "legend": {
+          "displayMode": "hidden"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT toString(toHour(timestamp)) AS hour_of_day, toFloat64(count()) AS turns FROM default.traces WHERE $__timeFilter(timestamp) AND user_id = '${user}' AND is_deleted = 0 GROUP BY hour_of_day ORDER BY toUInt8(hour_of_day)"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "barchart",
+      "title": "Session Length Distribution",
+      "description": "How many turns per session \u2014 long sessions = complex tasks",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "semi-dark-purple"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "turns_in_session",
+        "barWidth": 0.9,
+        "orientation": "auto",
+        "legend": {
+          "displayMode": "hidden"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT toString(turn_count) AS turns_in_session, toFloat64(count()) AS sessions FROM (SELECT session_id, count() AS turn_count FROM default.traces WHERE $__timeFilter(timestamp) AND user_id = '${user}' AND is_deleted = 0 GROUP BY session_id) GROUP BY turns_in_session ORDER BY toUInt32(turns_in_session)"
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "type": "row",
+      "title": "Tool Usage",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 41,
+      "type": "barchart",
+      "title": "Tool Call Breakdown",
+      "description": "Which tools Claude Code used most in your sessions",
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "semi-dark-orange"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "tool",
+        "barWidth": 0.8,
+        "orientation": "horizontal",
+        "legend": {
+          "displayMode": "hidden"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT arrayJoin(o.tool_call_names) AS tool, toFloat64(count()) AS calls FROM default.observations_eff o JOIN default.traces t ON o.trace_id = t.id WHERE $__timeFilter(o.start_time) AND t.user_id = '${user}' AND length(o.tool_call_names) > 0 GROUP BY tool ORDER BY calls DESC LIMIT 15"
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Daily Tool Decisions",
+      "description": "Accepted vs rejected tool calls per day \u2014 high reject rate may indicate trust issues",
+      "gridPos": {
+        "x": 12,
+        "y": 33,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "accepts"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Accepted"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rejects"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Rejected"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(timestamp) AS time, toFloat64(sum(toInt64OrZero(JSONExtractString(metadata['tool_decisions'],'accept')))) AS accepts, toFloat64(sum(toInt64OrZero(JSONExtractString(metadata['tool_decisions'],'reject')))) AS rejects FROM default.traces WHERE $__timeFilter(timestamp) AND user_id = '${user}' AND is_deleted = 0 AND metadata['tool_decisions'] != '' GROUP BY time ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 50,
+      "type": "row",
+      "title": "Team Context",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 51,
+      "type": "table",
+      "title": "Team Comparison",
+      "description": "How your usage compares to teammates in the selected time range",
+      "gridPos": {
+        "x": 0,
+        "y": 42,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "user_id"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "User"
+              },
+              {
+                "id": "custom.width",
+                "value": 180
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_usd"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cost (USD)"
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 50
+                    },
+                    {
+                      "color": "red",
+                      "value": 200
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sessions"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Sessions"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "commits"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Commits"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "accept_rate_pct"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Accept Rate %"
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 70
+                    },
+                    {
+                      "color": "green",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_per_commit"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cost/Commit"
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Cost (USD)",
+            "desc": true
+          }
+        ],
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT t.user_id, toFloat64(round(sum(o.effective_cost), 2)) AS cost_usd, toFloat64(count(DISTINCT t.session_id)) AS sessions, toFloat64(sum(toInt64OrZero(t.metadata['commit_count']))) AS commits, round(sum(toInt64OrZero(JSONExtractString(t.metadata['tool_decisions'],'accept'))) * 100.0 / greatest(sum(toInt64OrZero(JSONExtractString(t.metadata['tool_decisions'],'accept'))) + sum(toInt64OrZero(JSONExtractString(t.metadata['tool_decisions'],'reject'))), 1), 1) AS accept_rate_pct, round(sum(o.effective_cost) / greatest(sum(toInt64OrZero(t.metadata['commit_count'])), 1), 2) AS cost_per_commit FROM default.traces t JOIN default.observations_eff o ON o.trace_id = t.id WHERE $__timeFilter(t.timestamp) AND o.type='GENERATION' AND t.name NOT LIKE 'Execute evaluator%' AND t.is_deleted = 0 AND t.user_id IS NOT NULL GROUP BY t.user_id ORDER BY cost_usd DESC"
+        }
+      ]
+    },
+    {
+      "id": 60,
+      "type": "row",
+      "title": "Recent Sessions",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 61,
+      "type": "table",
+      "title": "Session History",
+      "description": "Most recent sessions \u2014 click session_id to open in Langfuse",
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse-langfuse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "session_id"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Session ID"
+              },
+              {
+                "id": "custom.width",
+                "value": 320
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "started"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Started"
+              },
+              {
+                "id": "unit",
+                "value": "dateTimeAsLocal"
+              },
+              {
+                "id": "custom.width",
+                "value": 180
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "turns"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Turns"
+              },
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_usd"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cost (USD)"
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              },
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 5
+                    },
+                    {
+                      "color": "red",
+                      "value": 20
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "output_tokens"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Output Tokens"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "commits"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Commits"
+              },
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Started",
+            "desc": true
+          }
+        ],
+        "footer": {
+          "show": true,
+          "reducer": [
+            "sum"
+          ],
+          "fields": [
+            "cost_usd",
+            "turns",
+            "output_tokens",
+            "commits"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse-langfuse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT t.session_id, toInt64(toUnixTimestamp64Milli(min(t.timestamp))) AS started, toFloat64(count(DISTINCT t.id)) AS turns, toFloat64(sum(o.effective_cost)) AS cost_usd, toFloat64(sum(o.eff_output)) AS output_tokens, toFloat64(sum(toInt64OrZero(t.metadata['commit_count']))) AS commits FROM default.traces t LEFT JOIN default.observations_eff o ON o.trace_id = t.id AND o.type = 'GENERATION' AND t.name NOT LIKE 'Execute evaluator%' WHERE $__timeFilter(t.timestamp) AND t.user_id = '${user}' AND t.is_deleted = 0 GROUP BY t.session_id ORDER BY started DESC LIMIT 50"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "user",
+        "label": "User",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse-langfuse"
+        },
+        "query": "SELECT DISTINCT user_id FROM default.traces WHERE user_id IS NOT NULL ORDER BY user_id",
+        "multi": false,
+        "includeAll": false,
+        "current": {},
+        "refresh": 1,
+        "sort": 1
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "Cost & Effectiveness",
+      "url": "/d/claude-cost-effectiveness",
+      "type": "link",
+      "icon": "external link",
+      "targetBlank": false
+    },
+    {
+      "title": "People & Adoption",
+      "url": "/d/claude-people-adoption",
+      "type": "link",
+      "icon": "external link",
+      "targetBlank": false
+    },
+    {
+      "title": "Governance & Audit",
+      "url": "/d/claude-governance-audit",
+      "type": "link",
+      "icon": "external link",
+      "targetBlank": false
+    }
+  ]
+}
